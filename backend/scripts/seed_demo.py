@@ -5,6 +5,7 @@ from src.models import User,SpectralLibrary,Endmember,MixtureSample,UnmixRun,Rep
 from src.utils.security import hash_password
 from src.services.run_service import create_snapshot
 from src.services.analysis_service import analyze_unmix
+from src.services.audit_service import log
 
 def seed():
     Base.metadata.create_all(engine)
@@ -33,5 +34,12 @@ def seed():
             library=libraries[0];ids=[s.id for s in db.query(MixtureSample).filter_by(library_id=library.id).order_by(MixtureSample.code).limit(3)];snapshot=create_snapshot(db,library,ids);result=analyze_unmix(snapshot,.005,80,2026)
             run=UnmixRun(name="校准库 · 首批三样本解混",library_id=library.id,sample_ids=ids,noise_sigma=.005,repeats=80,seed=2026,input_snapshot=snapshot,status="completed",result=result,owner="苏砚 · 光谱研究员");db.add(run);db.flush()
             db.add(ReplicationNote(run_id=run.id,title="首批复配观察记录",interpretation="配比符合非负与和为1约束；分位范围条件于固定端元与给定sigma，不保证真配比覆盖。",proposal="按点估计做小样复配并重新测谱，另行评估端元校准误差和模型失配。",status="approved",owner="苏砚 · 光谱研究员",reviewer="贺青 · 材料负责人",review_note="批准研究归档；复配比例仍须独立实验验证，不把条件扰动范围当作成分真值保证。"))
+        if not db.query(UnmixRun).filter_by(name="校准库 · 称量锁定三样本研究").first():
+            library=libraries[0];ids=[s.id for s in db.query(MixtureSample).filter_by(library_id=library.id).order_by(MixtureSample.code).limit(3)];snapshot=create_snapshot(db,library,ids)
+            basis="天平 BL-204（0.1 mg）称量：赭石 0.1200、石绿 0.1250，称量日期 2026-11-12，复核人 苏砚；其余颜料分摊剩余份额。"
+            locked=[{"endmember_id":e['id'],"code":e['code'],"name":e['name'],"weight":w} for e,w in zip(sorted(snapshot['endmembers'],key=lambda e:e['code'])[:2],[.12,.125])]
+            result=analyze_unmix(snapshot,.005,80,2026,locked,basis)
+            run=UnmixRun(name="校准库 · 称量锁定三样本研究",library_id=library.id,sample_ids=ids,noise_sigma=.005,repeats=80,seed=2026,input_snapshot=snapshot,status="completed",result=result,owner="苏砚 · 光谱研究员",locked_weights=locked,lock_basis=basis);db.add(run);db.flush()
+            log(db,"苏砚 · 光谱研究员","unmix.enqueue",run.id)
         db.commit();print(json.dumps({m.__tablename__:db.query(m).count() for m in [User,SpectralLibrary,Endmember,MixtureSample,UnmixRun,ReplicationNote]},ensure_ascii=False))
 if __name__=="__main__":seed()
